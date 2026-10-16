@@ -80,5 +80,5 @@ code against the full data, and anything it prints is sent to Copilot.
 Started from Google AI Studio's "AI Data Analyst" sample (Gemini Managed
 Agents). The pipeline shape (profile → analysis tables → charts → report)
 and the chart script come from it (`analyst/chart.py` keeps its Apache-2.0
-header). The Gemini web app and server are still in the tree (`server.ts`,
-`server/`, `src/`, `agent/`) and nothing new depends on them.
+header). The Gemini web app itself was removed; it is in git history before
+this change if it is ever needed.
