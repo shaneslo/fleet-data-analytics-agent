@@ -114,7 +114,11 @@ def export(df: pd.DataFrame, name: str, workspace: str | Path = "workspace",
 
     out_dir = Path(workspace) / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{slug(name)[:60]}_{datetime.now():%Y-%m-%d_%H%M%S}.xlsx"
+    base = f"{slug(name)[:60]}_{datetime.now():%Y-%m-%d_%H%M%S}"
+    path, n = out_dir / f"{base}.xlsx", 1
+    while path.exists():  # two exports in the same second must not overwrite each other
+        n += 1
+        path = out_dir / f"{base}_{n}.xlsx"
     wb = Workbook()
     titles = add_sheets(wb, slug(name) or "data", df, kinds, first_sheet=wb.active)
     wb.save(path)

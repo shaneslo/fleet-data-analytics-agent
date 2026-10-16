@@ -86,3 +86,9 @@ def test_if_changed_sees_same_size_rewrite_within_a_second(workspace, capsys):
     capsys.readouterr()
     profile.main(["--workspace", str(workspace), "--if-changed"])
     assert "Profile is current" not in capsys.readouterr().out
+
+
+def test_same_second_exports_do_not_overwrite(tmp_path):
+    df = pd.DataFrame({"Qty": [1]})
+    paths = {export(df, "same", workspace=tmp_path) for _ in range(3)}
+    assert len(paths) == 3 and all(p.exists() for p in paths)
