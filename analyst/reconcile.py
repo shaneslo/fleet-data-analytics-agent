@@ -47,6 +47,11 @@ def normalize_key(values: pd.Series, strip_leading_zeros: bool = False) -> pd.Se
     return out
 
 
+def _sum_or_missing(values: pd.Series) -> float:
+    """Sum, but a group with no values stays missing instead of becoming 0."""
+    return values.sum(min_count=1)
+
+
 def _prepare(df, keys, compare, aggregate, strip_zeros, side):
     frame = pd.DataFrame({f"key_{i}": normalize_key(df[k], strip_zeros) for i, k in enumerate(keys)})
     for i, c in enumerate(compare):
@@ -54,7 +59,7 @@ def _prepare(df, keys, compare, aggregate, strip_zeros, side):
     key_cols = [f"key_{i}" for i in range(len(keys))]
     frame = frame.dropna(subset=key_cols)
     if aggregate:
-        numeric = {c: "sum" for c in frame.columns if c.startswith("val_") and pd.api.types.is_numeric_dtype(frame[c])}
+        numeric = {c: _sum_or_missing for c in frame.columns if c.startswith("val_") and pd.api.types.is_numeric_dtype(frame[c])}
         other = {c: "first" for c in frame.columns if c.startswith("val_") and c not in numeric}
         return frame.groupby(key_cols, as_index=False, dropna=False).agg({**numeric, **other}), pd.DataFrame()
     dup_mask = frame.duplicated(key_cols, keep=False)

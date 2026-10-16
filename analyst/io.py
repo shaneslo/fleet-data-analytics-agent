@@ -101,9 +101,11 @@ def is_identifier_name(column: str) -> bool:
 
 def is_sensitive_name(column: str) -> bool:
     tokens = name_tokens(column)
-    if set(tokens) & _NOT_PERSONAL_TOKENS:
+    hits = {t for t in tokens if t in _SENSITIVE_TOKENS} | ({"".join(tokens)} & _SENSITIVE_TOKENS)
+    if not hits:
         return False
-    return any(t in _SENSITIVE_TOKENS for t in tokens) or "".join(tokens) in _SENSITIVE_TOKENS
+    # "Security Name" describes a holding; "Fund Client Name" still names a person.
+    return not (hits <= {"name"} and set(tokens) & _NOT_PERSONAL_TOKENS)
 
 
 def slug(text: str) -> str:
@@ -395,10 +397,21 @@ def _to_datetime(values: pd.Series) -> pd.Series:
 # Public API
 # --------------------------------------------------------------------------
 
-def table_from_rows(rows: list[list[str]], name: str, source: str, sheet: str | None = None) -> LoadedTable | None:
+def _plain_structure(rows: list[list[str]]) -> tuple[int, list[str], list[list[str]], list[dict]]:
+    """First row is the header; every other non-blank row is data."""
+    width = max(len(r) for r in rows)
+    padded = [r + [""] * (width - len(r)) for r in rows if any(r)]
+    return 1, _dedupe(padded[0]), padded[1:], []
+
+
+def table_from_rows(
+    rows: list[list[str]], name: str, source: str, sheet: str | None = None, clean: bool = True
+) -> LoadedTable | None:
+    """Build a typed table. clean=False skips header detection and junk-row removal,
+    for tables this tooling wrote itself, where a row labelled "Total" is real data."""
     if not any(_nonempty(r) for r in rows):
         return None
-    header_row, header, body, dropped = _structure(rows)
+    header_row, header, body, dropped = _structure(rows) if clean else _plain_structure(rows)
     raw = pd.DataFrame(body, columns=header) if body else pd.DataFrame(columns=header)
     df, kinds, warnings = _classify_and_convert(raw)
     df = df.reset_index(drop=True)
@@ -410,12 +423,12 @@ def table_from_rows(rows: list[list[str]], name: str, source: str, sheet: str | 
     )
 
 
-def load_file(path: str | Path) -> list[LoadedTable]:
-    """Load every non-empty table in a CSV or workbook."""
+def load_file(path: str | Path, clean: bool = True) -> list[LoadedTable]:
+    """Load every non-empty table in a CSV or workbook. See table_from_rows for clean."""
     path = Path(path)
     ext = path.suffix.lower()
     if ext in {".csv", ".tsv", ".txt"}:
-        table = table_from_rows(_read_delimited(path), slug(path.stem), path.name)
+        table = table_from_rows(_read_delimited(path), slug(path.stem), path.name, clean=clean)
         return [table] if table else []
     if ext in {".xlsx", ".xlsm"}:
         sheets = _read_xlsx(path)
@@ -426,15 +439,27 @@ def load_file(path: str | Path) -> list[LoadedTable]:
     tables = []
     for sheet, rows in sheets.items():
         name = slug(path.stem) if len(sheets) == 1 else f"{slug(path.stem)}__{slug(sheet)}"
-        table = table_from_rows(rows, name, path.name, sheet)
+        table = table_from_rows(rows, name, path.name, sheet, clean=clean)
         if table is not None and not table.df.empty:
+            if ext == ".xls":
+                _warn_xls_identifiers(table)
             tables.append(table)
     return tables
 
 
-def load_table(path: str | Path, sheet: str | None = None) -> pd.DataFrame:
+def _warn_xls_identifiers(table: LoadedTable) -> None:
+    for col, kind in table.column_kinds.items():
+        values = table.df[col].dropna().astype(str)
+        if kind == "identifier" and len(values) and values.str.fullmatch(r"\d+").all():
+            table.warnings.append(
+                f"'{col}': legacy .xls cell formats can't be read, so leading zeros on numbers stored as "
+                "numbers are lost. Save the file as .xlsx (or export CSV) if this column should be zero-padded."
+            )
+
+
+def load_table(path: str | Path, sheet: str | None = None, clean: bool = True) -> pd.DataFrame:
     """Load one CSV, or one sheet of a workbook (the first non-empty one by default)."""
-    tables = load_file(path)
+    tables = load_file(path, clean=clean)
     if not tables:
         raise ValueError(f"No data found in {path}")
     if sheet is None:

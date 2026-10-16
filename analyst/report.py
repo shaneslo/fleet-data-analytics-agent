@@ -88,7 +88,7 @@ def load_findings(run: Path) -> dict | None:
 def load_analysis(run: Path) -> dict[str, LoadedTable]:
     tables = {}
     for path in sorted((run / "analysis").glob("*.csv")):
-        loaded = load_file(path)
+        loaded = load_file(path, clean=False)
         if loaded:
             tables[f"analysis/{path.name}"] = loaded[0]
     return tables
@@ -263,6 +263,15 @@ def render_markdown(run, question, findings, tables, profile, unverified, sheets
     return "\n".join(out)
 
 
+def _append_text_safe(sheet, values: list) -> None:
+    """Append a row; a string starting with '=' stays text instead of becoming a formula."""
+    sheet.append(values)
+    if any(isinstance(v, str) and v.startswith("=") for v in values):
+        for cell in sheet[sheet.max_row]:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.data_type = "s"
+
+
 def write_excel(path: Path, question, findings, tables, profile, unverified, sheets) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
@@ -283,7 +292,7 @@ def write_excel(path: Path, question, findings, tables, profile, unverified, she
         rows.append(("Note", "No findings.json in this run; tables only."))
     rows += [("Unverified figure", f"{u['where']}: {u['figure']}") for u in unverified]
     for label, text in rows:
-        ws.append([label, text])
+        _append_text_safe(ws, [label, text])
         ws.cell(ws.max_row, 1).font = bold
         ws.cell(ws.max_row, 2).alignment = Alignment(wrap_text=True, vertical="top")
     ws.column_dimensions["A"].width = 20
@@ -293,18 +302,19 @@ def write_excel(path: Path, question, findings, tables, profile, unverified, she
         du = wb.create_sheet("Data used")
         du.append(["table", "source", "sheet", "rows", "dropped rows", "warnings"])
         for t in profile.get("tables", []):
-            du.append([t["name"], t["source"], t.get("sheet"), t["rows"], len(t["dropped_rows"]), "; ".join(t["warnings"])])
+            _append_text_safe(du, [t["name"], t["source"], t.get("sheet"), t["rows"],
+                                   len(t["dropped_rows"]), "; ".join(t["warnings"])])
         for cell in du[1]:
             cell.font = bold
 
     for p, table in tables.items():
         sheet = wb.create_sheet(sheets[p])
         df = table.df.head(EXCEL_MAX_ROWS)
-        sheet.append(list(df.columns))
+        _append_text_safe(sheet, [str(c) for c in df.columns])
         for cell in sheet[1]:
             cell.font = bold
         for row in df.itertuples(index=False):
-            sheet.append([None if (not isinstance(v, str) and pd.isna(v)) else
+            _append_text_safe(sheet, [None if (not isinstance(v, str) and pd.isna(v)) else
                           (v.to_pydatetime() if isinstance(v, pd.Timestamp) else v) for v in row])
         for j, col in enumerate(df.columns, 1):
             letter = get_column_letter(j)

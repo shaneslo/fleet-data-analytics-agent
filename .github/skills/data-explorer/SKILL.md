@@ -20,8 +20,9 @@ detail.
 - **Junk rows**: total/subtotal rows, repeated page headers and footer lines
   are dropped and listed under `dropped_rows` with the reason and source row.
 - **Identifiers stay text**: account, CUSIP, lot, ID and code columns, and any
-  all-digit column with leading zeros, are never parsed as numbers. Excel cells
-  with a zero-padded number format get their zeros back.
+  all-digit column with leading zeros, are never parsed as numbers. In `.xlsx`
+  files, cells with a zero-padded number format get their zeros back; legacy
+  `.xls` files can't, and the profile warns when that may matter.
 - **Numbers**: `1,234.56`, `(1,234.56)`, `$1,234`, `1234.56-` and `12.5%`
   parse (percent signs are stripped, not divided out).
 - **Encodings and delimiters**: UTF-8 or Windows-1252; comma, semicolon, tab or pipe.

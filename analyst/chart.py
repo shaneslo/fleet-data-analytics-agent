@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     y_cols = [c.strip() for c in args.y.split(",")] if args.y else []
     out_path = run / args.output
     try:
-        render(load_table(data_path), args.type, out_path, args.x, y_cols,
+        render(load_table(data_path, clean=False), args.type, out_path, args.x, y_cols,
                args.title, args.xlabel, args.ylabel, args.top)
     except Exception as exc:  # noqa: BLE001 - a failed chart must not stop the report
         print(f"ERROR: failed to render chart: {exc}")
