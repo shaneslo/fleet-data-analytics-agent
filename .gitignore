@@ -24,3 +24,16 @@ dist-ssr
 *.sw?
 service-account.json
 
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Analysis workspace: source exports and outputs never get committed
+workspace/*
+!workspace/README.md
+~$*.xlsx
