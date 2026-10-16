@@ -1,5 +1,5 @@
 ---
-description: Answer a question about the exports in workspace/data
+description: Full report on a question about the exports in workspace/data (md + xlsx)
 agent: data-analyst
 ---
 

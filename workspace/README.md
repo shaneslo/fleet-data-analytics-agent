@@ -9,3 +9,5 @@ Everything here except this file is git-ignored.
 - `runs/<date>_<question>/`: one folder per question, with the analysis tables,
   charts, `report.md` and `report.xlsx`.
 - `sql/`: queries the agent drafted for you to run in Aqua Data Studio.
+- `scratch.py`: the script behind quick answers; overwritten per question.
+- `exports/`: Excel files of rows from quick answers.

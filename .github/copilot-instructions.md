@@ -8,11 +8,13 @@ analysis, write the analysis script, and write the conclusions.
 
 ## Ground rules
 
-- **Every number you state comes from a table you saved.** If the data can't
-  answer the question, say what is missing and which export or query would
-  answer it. `analyst.report` checks figures in your findings against the saved
-  tables and lists any it cannot find; treat a listed figure as a bug to fix.
-- **Read the profile, not the raw files.** `python -m analyst.profile` gives
+- **Every number you state comes from code you ran**: a saved table in a
+  report, printed script output in a quick answer. If the data can't answer
+  the question, say what is missing and which export or query would answer it.
+  `analyst.report` checks figures in your findings against the saved tables
+  and lists any it cannot find; treat a listed figure as a bug to fix.
+- **Read the profile, not the raw files.** `python -m analyst.profile` (add
+  `--if-changed` to reuse an up-to-date profile) gives
   columns, types, stats and masked samples. Do not print raw rows of account or
   personal columns (account numbers, names, addresses, tax IDs) into the
   terminal or chat. Print aggregates.
@@ -34,7 +36,21 @@ analysis, write the analysis script, and write the conclusions.
 - Shell commands must work in PowerShell: no `&&` chains, `mkdir -p`, `cp` or
   `export`. The `analyst` commands create the folders they need.
 
-## Workflow
+## Two modes
+
+- **Quick answer** (the default for short questions such as "how many",
+  "which", "top 10", "what's the total"): answer in chat from a scratch
+  script, with no run folder or report. Follow-ups build on the same script.
+  Skill: `quick-answer`. Prompt: `/ask`.
+- **Full report** (when the user asks for a report, a write-up, something to
+  save or send, or a reconciliation between sources): the workflow below.
+  Prompt: `/analyze`.
+
+If a quick question turns out to need the full workflow, say so in one line
+and offer to switch. When the user says "write this up", switch, reusing what
+the scratch script already worked out.
+
+## Full report workflow
 
 1. **Profile**: `python -m analyst.profile`. Read the summary: table names,
    column kinds, dropped rows, warnings, join candidates. Re-run it whenever
@@ -66,5 +82,7 @@ accounts, which source is the reference), ask once before step 3.
 | `workspace/profile.json` | output of `analyst.profile` |
 | `workspace/runs/<run>/` | one folder per question: `analysis/`, `charts/`, `findings.json`, `report.md`, `report.xlsx` |
 | `workspace/sql/` | SQL you draft for Sedona |
+| `workspace/scratch.py` | the quick-answer script; overwritten per question |
+| `workspace/exports/` | Excel files of rows from quick answers |
 | `context/` | what the sources mean; Sedona schema and trusted queries. Committed. |
 | `analyst/` | the tooling. Change it only when asked. |
