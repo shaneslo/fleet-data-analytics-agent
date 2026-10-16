@@ -23,6 +23,9 @@ FORBIDDEN = {
     "SHUTDOWN", "KILL", "OPENROWSET", "OPENDATASOURCE", "OPENQUERY", "BULK",
     "WAITFOR", "RECONFIGURE", "WRITETEXT", "UPDATETEXT", "SP_EXECUTESQL",
 }
+# What a read-only statement may begin with. Anything else at the start of a batch
+# could be an implicit procedure call: SQL Server runs `dbo.Proc` without EXEC there.
+ALLOWED_STARTS = {"SELECT", "WITH", "DECLARE", "SET", "USE", "IF", "ELSE", "BEGIN", "END", "PRINT"}
 _PROC_PREFIX = re.compile(r"\b(SP|XP)_\w+", re.I)
 
 
@@ -65,6 +68,17 @@ def strip_sql(sql: str) -> str:
     return "".join(out)
 
 
+def statement_starts(code: str) -> list[str]:
+    """First word of every batch (split on GO lines) and of every ';'-separated statement."""
+    starts = []
+    for batch in re.split(r"^\s*GO\b[^\n]*$", code, flags=re.IGNORECASE | re.MULTILINE):
+        for statement in batch.split(";"):
+            m = re.match(r"\s*([A-Za-z_@#][\w@#$]*|\()", statement)
+            if m:
+                starts.append(m.group(1))
+    return starts
+
+
 def check(sql: str) -> tuple[list[str], list[str]]:
     """Return (errors, warnings) for one SQL text."""
     errors, warnings = [], []
@@ -74,6 +88,14 @@ def check(sql: str) -> tuple[list[str], list[str]]:
 
     for w in sorted(set(upper) & FORBIDDEN):
         errors.append(f"'{w}' is not allowed: queries for Sedona must only read")
+    if re.search(r"\bNEXT\s+VALUE\s+FOR\b", code, re.IGNORECASE):
+        errors.append("'NEXT VALUE FOR' advances a sequence; it is not read-only")
+    for start in statement_starts(code):
+        if start.upper() not in ALLOWED_STARTS and start != "(":
+            errors.append(
+                f"statement starts with '{start}': only {', '.join(sorted(ALLOWED_STARTS))} may start a "
+                "statement (a bare procedure name at the start of a batch runs it)"
+            )
     for m in _PROC_PREFIX.finditer(code):
         errors.append(f"system procedure '{m.group(0)}' is not allowed")
     for idx, w in enumerate(upper):
@@ -81,7 +103,7 @@ def check(sql: str) -> tuple[list[str], list[str]]:
             target = words[idx + 1] if idx + 1 < len(words) else ""
             if not target.startswith("#"):
                 errors.append(f"'INTO {target}' writes to a permanent table; use a CTE or INTO #temp")
-    if re.search(r"\w+\s*\.\s*\w+\s*\.\s*\w+\s*\.\s*\w+", code):
+    if re.search(r"\w+\s*\.\s*\w*\s*\.\s*\w*\s*\.\s*\w+", code):  # srv.db.schema.t, srv.db..t
         errors.append("four-part name (linked server) is not allowed")
 
     if re.search(r"\bSELECT\s+(TOP\s*\(?\s*\d+\s*\)?\s+)?\*", code, re.I):

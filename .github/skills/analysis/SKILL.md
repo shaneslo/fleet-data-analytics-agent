@@ -55,7 +55,10 @@ breaks = reconcile(gk, silver, keys=[("Account", "AcctNo"), ("CUSIP", "CUSIP")],
 - `--keys` / `--compare` take `left=right` pairs, or one name when both sides match.
 - `--aggregate` (`aggregate=True`) sums numeric columns per key first: use it
   when one side is lots and the other is positions. Without it, keys that repeat
-  are reported as `duplicate_key_in_<side>` and left out of the comparison.
+  are reported as `duplicate_key_in_<side>` and left out of the comparison on
+  both sides.
+- Rows with a blank key column are reported as `incomplete_key_in_<side>`,
+  never dropped silently. Count them in the findings.
 - `--strip-leading-zeros` when the profile showed the overlap rises once
   leading zeros are ignored.
 - `--tolerance` is absolute (default 0.01). Pick it to match the precision of

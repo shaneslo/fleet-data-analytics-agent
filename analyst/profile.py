@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from analyst.io import LoadedTable, is_sensitive_name, load_all, name_tokens, safe_stdout
+from analyst.io import LoadedTable, is_personal_name, is_sensitive_name, load_all, name_tokens, safe_stdout
 
 # Different systems name the same key differently.
 _KEY_SYNONYMS = {
@@ -35,7 +35,9 @@ MAX_DISTINCT_FOR_OVERLAP = 2_000_000
 
 def shape(value) -> str:
     """'AB-00123' -> 'XX-99999'. Keeps format, drops content."""
-    return re.sub(r"[A-Za-z]", "X", re.sub(r"\d", "9", str(value)))
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)  # a phone number stored as 5551234567.0 shapes as 9999999999
+    return re.sub(r"[^\W\d_]", "X", re.sub(r"\d", "9", str(value)))
 
 
 def _num(value):
@@ -59,6 +61,8 @@ def _column_profile(series: pd.Series, kind: str, masked: bool) -> dict:
     present = series.dropna()
     if present.empty:
         info["stats"] = {}
+    elif masked and kind in ("numeric", "datetime"):
+        info["stats"] = {}
     elif kind == "numeric":
         info["stats"] = {
             "min": _num(present.min()), "max": _num(present.max()), "sum": _num(present.sum()),
@@ -78,8 +82,12 @@ def _column_profile(series: pd.Series, kind: str, masked: bool) -> dict:
 
 
 def should_mask(column: str, kind: str, mask: bool) -> bool:
-    """Mask account and personal values; numeric totals and dates stay visible."""
-    return mask and kind in ("identifier", "text") and is_sensitive_name(column)
+    """Personal columns are masked whatever their type (a numeric ZIP, a parsed birth
+    date). Account columns are masked as identifiers or text, so a measure such as
+    'Account Value' stays visible."""
+    if not mask:
+        return False
+    return is_personal_name(column) or (kind in ("identifier", "text") and is_sensitive_name(column))
 
 
 def _sample(table: LoadedTable, mask: bool, rows: int = 5) -> list[dict]:
@@ -107,7 +115,8 @@ def profile_table(table: LoadedTable, mask: bool = True) -> dict:
         "rows": len(df),
         "columns_count": len(df.columns),
         "duplicate_rows": int(df.duplicated().sum()),
-        "dropped_rows": table.dropped,
+        # Previews can hold account numbers ("Total Account 00012345"): masked profiles keep row and reason only.
+        "dropped_rows": [{k: v for k, v in d.items() if k != "preview"} for d in table.dropped] if mask else table.dropped,
         "warnings": table.warnings,
         "columns": [
             _column_profile(df[c], table.column_kinds[c], should_mask(c, table.column_kinds[c], mask))

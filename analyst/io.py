@@ -49,12 +49,18 @@ _SENSITIVE_TOKENS = {
     "email", "phone", "dob", "birth", "birthdate",
 }
 
+_PERSONAL_TOKENS = _SENSITIVE_TOKENS - {"account", "acct", "accountno", "acctno", "portfolio"}
+
 # "Security Name" or "Fund Name" describe holdings, not people.
 _NOT_PERSONAL_TOKENS = {"security", "issuer", "fund", "asset", "product", "instrument", "file", "sheet", "column"}
 
 _DATE_NAME_TOKENS = {"date", "dt", "asof", "settle", "settled", "trade", "acquired", "acq", "sold", "period", "month"}
 
 _TOTAL_RE = re.compile(r"^\s*(grand\s+|sub\s*-?\s*)?totals?\b", re.I)
+_FOOTER_RE = re.compile(
+    r"report|generated|printed|page\s+\d|confidential|end of|run (date|time)|as of|source:|copyright|\u00a9|\*\*\*",
+    re.IGNORECASE,
+)
 _NUMBER_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 _SCI_RE = re.compile(r"^\d(\.\d+)?[eE]\+\d+$")
 _DATEISH_RE = re.compile(r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}")
@@ -97,6 +103,15 @@ def is_identifier_name(column: str) -> bool:
     if all(t in _ID_NAME_TOKENS for t in tokens):
         return True
     return tokens[-1] in _ID_SUFFIX_TOKENS and len(tokens) <= 3
+
+
+def is_personal_name(column: str) -> bool:
+    """Columns about a person (name, contact, tax ID, birth date): masked whatever their type."""
+    tokens = name_tokens(column)
+    hits = {t for t in tokens if t in _PERSONAL_TOKENS} | ({"".join(tokens)} & _PERSONAL_TOKENS)
+    if not hits:
+        return False
+    return not (hits <= {"name"} and set(tokens) & _NOT_PERSONAL_TOKENS)
 
 
 def is_sensitive_name(column: str) -> bool:
@@ -252,17 +267,22 @@ def find_header_row(rows: list[list[str]], scan: int = 30) -> int:
 
 
 def _dedupe(names: list[str]) -> list[str]:
-    seen: dict[str, int] = {}
+    used: set[str] = set()
     out = []
     for i, name in enumerate(names):
-        name = re.sub(r"\s+", " ", name).strip() or f"column_{i + 1}"
-        if name in seen:
-            seen[name] += 1
-            name = f"{name}_{seen[name]}"
-        else:
-            seen[name] = 0
-        out.append(name)
+        base = re.sub(r"\s+", " ", name).strip() or f"column_{i + 1}"
+        candidate, n = base, 1
+        while candidate in used:  # 'Account,Account,Account_1' must not repeat a name
+            candidate, n = f"{base}_{n}", n + 1
+        used.add(candidate)
+        out.append(candidate)
     return out
+
+
+def _looks_like_footer(row: list[str]) -> bool:
+    text = next(c for c in row if c)
+    words = re.findall(r"[^\W\d_]{2,}", text)
+    return bool(_FOOTER_RE.search(text)) or len(words) >= 3
 
 
 def _is_total_row(row: list[str]) -> bool:
@@ -297,9 +317,10 @@ def _structure(rows: list[list[str]]) -> tuple[int, list[str], list[list[str]], 
             continue
         body.append((source_row, cells))
 
-    # Footer: trailing rows with a single filled cell ("Report generated ...").
+    # Footer: trailing rows with one filled cell that reads like a note
+    # ("Report generated ..."). A lone account number or ticker is data.
     if len(header) > 1:
-        while body and _nonempty(body[-1][1]) == 1:
+        while body and _nonempty(body[-1][1]) == 1 and _looks_like_footer(body[-1][1]):
             source_row, cells = body.pop()
             dropped.append({"row": source_row, "reason": "footer row", "preview": _preview(cells)})
 
@@ -331,13 +352,12 @@ def _classify_and_convert(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str
                     "was opened in Excel as a number and digits were lost. Re-export as text."
                 )
             variants = filled.drop_duplicates()
-            clashes = variants.groupby(variants.str.lstrip("0")).filter(lambda g: len(g) > 1)
-            if not clashes.empty:
-                clashes = clashes.iloc[clashes.str.lstrip("0").argsort(kind="stable")]
-                example = clashes.head(2).tolist()
+            clashing = int(variants.str.lstrip("0").duplicated(keep=False).sum())
+            if clashing:
+                # Count only: the values themselves may be account numbers.
                 warnings.append(
-                    f"'{col}': some values differ only by leading zeros (e.g. {' vs '.join(example)}). "
-                    "Normalize before joining or reconciling."
+                    f"'{col}': {clashing} distinct value(s) differ from another only by leading zeros "
+                    "(like 00012 and 12). Normalize before joining or reconciling."
                 )
             if "cusip" in name_tokens(col) and filled.size:
                 bad = int((filled.str.len() != 9).sum())

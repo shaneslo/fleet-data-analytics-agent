@@ -13,7 +13,9 @@ Break types:
   missing_in_<right>   key only in the left table
   missing_in_<left>    key only in the right table
   value_mismatch       key in both, a compared column differs beyond tolerance
-  duplicate_key        key appears more than once on a side (without --aggregate)
+  duplicate_key_in_<side>   key appears more than once on that side (without --aggregate);
+                            left out of the comparison on both sides
+  incomplete_key_in_<side>  a key column is blank on that row, so it can't be matched
 """
 
 from __future__ import annotations
@@ -57,14 +59,18 @@ def _prepare(df, keys, compare, aggregate, strip_zeros, side):
     for i, c in enumerate(compare):
         frame[f"val_{i}"] = df[c].values
     key_cols = [f"key_{i}" for i in range(len(keys))]
-    frame = frame.dropna(subset=key_cols)
+    blank = frame[key_cols].isna().any(axis=1) | (frame[key_cols] == "").fillna(False).any(axis=1)
+    incomplete = frame.loc[blank, key_cols].assign(side=side)
+    frame = frame.loc[~blank]
     if aggregate:
-        numeric = {c: _sum_or_missing for c in frame.columns if c.startswith("val_") and pd.api.types.is_numeric_dtype(frame[c])}
-        other = {c: "first" for c in frame.columns if c.startswith("val_") and c not in numeric}
-        return frame.groupby(key_cols, as_index=False, dropna=False).agg({**numeric, **other}), pd.DataFrame()
+        vals = [c for c in frame.columns if c.startswith("val_")]
+        numeric = {c: _sum_or_missing for c in vals if pd.api.types.is_numeric_dtype(frame[c])}
+        other = {c: "first" for c in vals if c not in numeric}
+        grouped = frame.groupby(key_cols, as_index=False, dropna=False).agg({**numeric, **other})
+        return grouped, frame.iloc[0:0][key_cols].assign(side=side), incomplete
     dup_mask = frame.duplicated(key_cols, keep=False)
     dups = frame.loc[dup_mask, key_cols].drop_duplicates().assign(side=side)
-    return frame.loc[~dup_mask], dups
+    return frame, dups, incomplete
 
 
 def reconcile(
@@ -80,9 +86,15 @@ def reconcile(
 ) -> pd.DataFrame:
     """Return one row per break. Columns: the keys, break_type, column, left/right values, difference."""
     key_names = [lk for lk, _ in keys]
-    lf, ldup = _prepare(left, [k for k, _ in keys], [c for c, _ in compare], aggregate, strip_leading_zeros, left_name)
-    rf, rdup = _prepare(right, [k for _, k in keys], [c for _, c in compare], aggregate, strip_leading_zeros, right_name)
+    lf, ldup, lbad = _prepare(left, [k for k, _ in keys], [c for c, _ in compare], aggregate, strip_leading_zeros, left_name)
+    rf, rdup, rbad = _prepare(right, [k for _, k in keys], [c for _, c in compare], aggregate, strip_leading_zeros, right_name)
     key_cols = [f"key_{i}" for i in range(len(keys))]
+    # A key duplicated on either side can't be compared one-to-one: report it once
+    # as a duplicate and leave it out of both sides, so it is not also "missing".
+    dup_keys = pd.concat([ldup[key_cols], rdup[key_cols]]).drop_duplicates()
+    if not dup_keys.empty:
+        lf = lf.merge(dup_keys, on=key_cols, how="left", indicator="_dup").query("_dup == 'left_only'").drop(columns="_dup")
+        rf = rf.merge(dup_keys, on=key_cols, how="left", indicator="_dup").query("_dup == 'left_only'").drop(columns="_dup")
     merged = lf.merge(rf, on=key_cols, how="outer", suffixes=("_l", "_r"), indicator=True)
 
     lv, rv = f"{left_name}_value", f"{right_name}_value"
@@ -121,6 +133,10 @@ def reconcile(
     for dups in (ldup, rdup):
         for rec in dups.itertuples(index=False):
             breaks.append(row([getattr(rec, k) for k in key_cols], f"duplicate_key_in_{rec.side}"))
+    for bad in (lbad, rbad):
+        for rec in bad.itertuples(index=False):
+            keys_row = [None if pd.isna(getattr(rec, k)) else getattr(rec, k) for k in key_cols]
+            breaks.append(row(keys_row, f"incomplete_key_in_{rec.side}"))
 
     columns = key_names + ["break_type", "column", lv, rv, "difference"]
     return pd.DataFrame(breaks, columns=columns)
