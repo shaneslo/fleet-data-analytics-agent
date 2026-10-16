@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 from analyst.io import LoadedTable, load_file, numeric_values, slug
-from analyst.xlsx import append_row, write_table
+from analyst.xlsx import add_sheets, append_row
 
 MD_TABLE_ROWS = 20
 
@@ -298,7 +298,7 @@ def write_excel(path: Path, question, findings, tables, profile, unverified, she
             cell.font = bold
 
     for p, table in tables.items():
-        write_table(wb.create_sheet(sheets[p]), table.df, table.column_kinds)
+        add_sheets(wb, sheets[p], table.df, table.column_kinds)
     wb.save(path)
 
 

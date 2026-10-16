@@ -183,7 +183,7 @@ def build_profile(workspace: str | Path = "workspace", mask: bool = True) -> dic
 
 def _file_stamps(workspace: str | Path) -> dict[str, list]:
     """Name -> [size, mtime] for every data file, to tell whether the profile is stale."""
-    return {p.name: [p.stat().st_size, int(p.stat().st_mtime)] for p in data_files(workspace)}
+    return {p.name: [p.stat().st_size, p.stat().st_mtime_ns] for p in data_files(workspace)}
 
 
 def summarize(profile: dict) -> str:

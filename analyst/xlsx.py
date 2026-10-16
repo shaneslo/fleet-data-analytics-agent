@@ -35,20 +35,25 @@ def infer_kinds(df: pd.DataFrame) -> dict[str, str]:
     """Column kinds for a frame that didn't come from analyst.io (e.g. one built in a script)."""
     kinds = {}
     for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
+        if is_identifier_name(str(col)):  # before numeric: an integer Account column is still an id
+            kinds[col] = "identifier"
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
             kinds[col] = "datetime"
         elif pd.api.types.is_numeric_dtype(df[col]) and not pd.api.types.is_bool_dtype(df[col]):
             kinds[col] = "numeric"
-        elif is_identifier_name(str(col)):
-            kinds[col] = "identifier"
         else:
             kinds[col] = "text"
     return kinds
 
 
-def _cell(value):
+def _cell(value, kind: str = "text"):
     if value is None or (not isinstance(value, str) and pd.isna(value)):
         return None
+    if kind == "identifier" and not isinstance(value, str):
+        # Excel keeps 15 significant digits: a long account number must be text.
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        return str(value.item() if hasattr(value, "item") else value)
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
     if hasattr(value, "item"):  # numpy scalar
@@ -57,17 +62,20 @@ def _cell(value):
 
 
 def write_table(sheet, df: pd.DataFrame, kinds: dict[str, str] | None = None) -> None:
-    """Fill a worksheet with a frame: bold frozen header, filter, formats, sensible widths."""
+    """Fill a worksheet with a frame: bold frozen header, filter, formats, sensible widths.
+    The frame must fit one sheet (EXCEL_MAX_ROWS); use add_sheets for anything larger."""
     from openpyxl.styles import Font
     from openpyxl.utils import get_column_letter
 
+    if len(df) > EXCEL_MAX_ROWS:
+        raise ValueError(f"{len(df):,} rows do not fit one sheet; use add_sheets()")
     kinds = kinds or infer_kinds(df)
-    df = df.head(EXCEL_MAX_ROWS)
+    col_kinds = [kinds.get(c, "text") for c in df.columns]
     append_row(sheet, [str(c) for c in df.columns])
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     for row in df.itertuples(index=False):
-        append_row(sheet, [_cell(v) for v in row])
+        append_row(sheet, [_cell(v, k) for v, k in zip(row, col_kinds)])
     for j, col in enumerate(df.columns, 1):
         kind = kinds.get(col, "text")
         fmt = {"identifier": "@", "datetime": "yyyy-mm-dd"}.get(kind)
@@ -84,6 +92,21 @@ def write_table(sheet, df: pd.DataFrame, kinds: dict[str, str] | None = None) ->
         sheet.auto_filter.ref = sheet.dimensions
 
 
+def add_sheets(wb, name: str, df: pd.DataFrame, kinds: dict[str, str] | None = None,
+               first_sheet=None) -> list[str]:
+    """Write a frame of any length: one sheet per EXCEL_MAX_ROWS rows (name, name_2, ...).
+    Returns the sheet titles used."""
+    kinds = kinds or infer_kinds(df)
+    titles = []
+    for part, start in enumerate(range(0, max(len(df), 1), EXCEL_MAX_ROWS), 1):
+        title = (name[:31] if part == 1 else f"{name[:27]}_{part}") or "data"
+        sheet = first_sheet if (part == 1 and first_sheet is not None) else wb.create_sheet()
+        sheet.title = title
+        write_table(sheet, df.iloc[start:start + EXCEL_MAX_ROWS], kinds)
+        titles.append(title)
+    return titles
+
+
 def export(df: pd.DataFrame, name: str, workspace: str | Path = "workspace",
            kinds: dict[str, str] | None = None) -> Path:
     """Save one frame as workspace/exports/<name>_<HHMMSS>.xlsx and return the path."""
@@ -93,8 +116,8 @@ def export(df: pd.DataFrame, name: str, workspace: str | Path = "workspace",
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{slug(name)[:60]}_{datetime.now():%Y-%m-%d_%H%M%S}.xlsx"
     wb = Workbook()
-    write_table(wb.active, df, kinds)
-    wb.active.title = slug(name)[:31] or "data"
+    titles = add_sheets(wb, slug(name) or "data", df, kinds, first_sheet=wb.active)
     wb.save(path)
-    print(f"Saved {len(df):,} row(s) to {path.as_posix()}")
+    where = f" across {len(titles)} sheets" if len(titles) > 1 else ""
+    print(f"Saved {len(df):,} row(s){where} to {path.as_posix()}")
     return path
