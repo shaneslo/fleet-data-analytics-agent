@@ -37,9 +37,9 @@ import numpy as np
 import pandas as pd
 
 from analyst.io import LoadedTable, load_file, numeric_values, slug
+from analyst.xlsx import append_row, write_table
 
 MD_TABLE_ROWS = 20
-EXCEL_MAX_ROWS = 1_048_575
 
 _DATE_TEXT_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
 _CODE_RE = re.compile(r"`[^`]*`")
@@ -263,19 +263,9 @@ def render_markdown(run, question, findings, tables, profile, unverified, sheets
     return "\n".join(out)
 
 
-def _append_text_safe(sheet, values: list) -> None:
-    """Append a row; a string starting with '=' stays text instead of becoming a formula."""
-    sheet.append(values)
-    if any(isinstance(v, str) and v.startswith("=") for v in values):
-        for cell in sheet[sheet.max_row]:
-            if isinstance(cell.value, str) and cell.value.startswith("="):
-                cell.data_type = "s"
-
-
 def write_excel(path: Path, question, findings, tables, profile, unverified, sheets) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
-    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
@@ -292,7 +282,7 @@ def write_excel(path: Path, question, findings, tables, profile, unverified, she
         rows.append(("Note", "No findings.json in this run; tables only."))
     rows += [("Unverified figure", f"{u['where']}: {u['figure']}") for u in unverified]
     for label, text in rows:
-        _append_text_safe(ws, [label, text])
+        append_row(ws, [label, text])
         ws.cell(ws.max_row, 1).font = bold
         ws.cell(ws.max_row, 2).alignment = Alignment(wrap_text=True, vertical="top")
     ws.column_dimensions["A"].width = 20
@@ -302,35 +292,13 @@ def write_excel(path: Path, question, findings, tables, profile, unverified, she
         du = wb.create_sheet("Data used")
         du.append(["table", "source", "sheet", "rows", "dropped rows", "warnings"])
         for t in profile.get("tables", []):
-            _append_text_safe(du, [t["name"], t["source"], t.get("sheet"), t["rows"],
+            append_row(du, [t["name"], t["source"], t.get("sheet"), t["rows"],
                                    len(t["dropped_rows"]), "; ".join(t["warnings"])])
         for cell in du[1]:
             cell.font = bold
 
     for p, table in tables.items():
-        sheet = wb.create_sheet(sheets[p])
-        df = table.df.head(EXCEL_MAX_ROWS)
-        _append_text_safe(sheet, [str(c) for c in df.columns])
-        for cell in sheet[1]:
-            cell.font = bold
-        for row in df.itertuples(index=False):
-            _append_text_safe(sheet, [None if (not isinstance(v, str) and pd.isna(v)) else
-                          (v.to_pydatetime() if isinstance(v, pd.Timestamp) else v) for v in row])
-        for j, col in enumerate(df.columns, 1):
-            letter = get_column_letter(j)
-            kind = table.column_kinds.get(col, "text")
-            fmt = {"identifier": "@", "datetime": "yyyy-mm-dd"}.get(kind)
-            if kind == "numeric":
-                whole = df[col].dropna().map(float.is_integer).all()
-                fmt = "#,##0" if whole else "#,##0.00"
-            if fmt:
-                for (cell,) in sheet.iter_rows(min_row=2, min_col=j, max_col=j):
-                    cell.number_format = fmt
-            width = max([len(str(col))] + [len(_fmt(v)) for v in df[col].head(200)])
-            sheet.column_dimensions[letter].width = min(max(width + 2, 8), 60)
-        sheet.freeze_panes = "A2"
-        if len(df.columns):
-            sheet.auto_filter.ref = sheet.dimensions
+        write_table(wb.create_sheet(sheets[p]), table.df, table.column_kinds)
     wb.save(path)
 
 

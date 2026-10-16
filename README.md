@@ -27,8 +27,13 @@ In VS Code, select `.venv` as the Python interpreter, open Copilot Chat in
 
 1. Put exports in `workspace/data/`. Save them straight from the source system;
    re-saving a CSV in Excel can strip leading zeros from account numbers and CUSIPs.
-2. In Copilot Chat run `/analyze` and type the question, or just ask.
-3. Read `workspace/runs/<date>_<question>/report.md` (or `report.xlsx`).
+2. In Copilot Chat:
+   - **Quick questions**: `/ask` or just ask ("how many accounts hold
+     594918104?", "top 10 realized losses in Q3"). The answer comes back in
+     chat; follow-ups build on it, and lists of rows land in
+     `workspace/exports/*.xlsx`. Say "write this up" to turn it into a report.
+   - **Reports**: `/analyze` and the question. Read
+     `workspace/runs/<date>_<question>/report.md` (or `report.xlsx`).
 
 For ledger data, run `/sedona-query`. The agent writes a read-only T-SQL file
 to `workspace/sql/`, checks it, and tells you what to run in Aqua Data Studio
@@ -52,8 +57,8 @@ account numbers, client names or balances.
 |---|---|
 | `.github/copilot-instructions.md` | workflow and ground rules Copilot follows in this repo |
 | `.github/agents/data-analyst.agent.md` | the custom agent |
-| `.github/prompts/` | `/analyze`, `/sedona-query` |
-| `.github/skills/` | data-explorer, analysis, visualization, reporting, sedona-sql |
+| `.github/prompts/` | `/ask`, `/analyze`, `/sedona-query` |
+| `.github/skills/` | quick-answer, data-explorer, analysis, visualization, reporting, sedona-sql |
 | `analyst/` | the Python tooling the skills call (`python -m analyst.<module>`) |
 | `context/` | your knowledge of the sources |
 | `workspace/` | data and outputs (git-ignored) |
@@ -62,12 +67,13 @@ account numbers, client names or balances.
 
 | Command | Does |
 |---|---|
-| `python -m analyst.profile` | loads every export (header detection, total/footer rows dropped, identifiers kept as text, `(1,234.56)` negatives) and writes `workspace/profile.json` with masked samples and join candidates |
+| `python -m analyst.profile [--if-changed]` | loads every export (header detection, total/footer rows dropped, identifiers kept as text, `(1,234.56)` negatives) and writes `workspace/profile.json` with masked samples and join candidates |
 | `python -m analyst.run new "<question>"` | creates a run folder |
 | `python -m analyst.reconcile ...` | compares two tables on a key; writes every break and a summary |
 | `python -m analyst.chart ...` | renders a PNG from a result table |
 | `python -m analyst.report --run RUN` | builds `report.md` and `report.xlsx`; flags figures it cannot find in the saved tables |
 | `python -m analyst.sqlcheck file.sql` | fails on anything in a query that is not read-only |
+| `analyst.xlsx.export(df, name)` | (from Python) saves rows to `workspace/exports/` with identifiers kept as text |
 
 ## Before using real data
 

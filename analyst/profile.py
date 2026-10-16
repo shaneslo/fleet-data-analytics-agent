@@ -19,7 +19,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from analyst.io import LoadedTable, is_personal_name, is_sensitive_name, load_all, name_tokens, safe_stdout
+from analyst.io import (
+    LoadedTable,
+    data_files,
+    is_personal_name,
+    is_sensitive_name,
+    load_all,
+    name_tokens,
+    safe_stdout,
+)
 
 # Different systems name the same key differently.
 _KEY_SYNONYMS = {
@@ -169,7 +177,13 @@ def build_profile(workspace: str | Path = "workspace", mask: bool = True) -> dic
         "masked": mask,
         "tables": [profile_table(t, mask) for t in tables.values()],
         "join_candidates": join_candidates(tables),
+        "files": _file_stamps(workspace),
     }
+
+
+def _file_stamps(workspace: str | Path) -> dict[str, list]:
+    """Name -> [size, mtime] for every data file, to tell whether the profile is stale."""
+    return {p.name: [p.stat().st_size, int(p.stat().st_mtime)] for p in data_files(workspace)}
 
 
 def summarize(profile: dict) -> str:
@@ -203,14 +217,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workspace", default="workspace")
     parser.add_argument("--no-mask", action="store_true", help="show raw values in samples and top values")
+    parser.add_argument("--if-changed", action="store_true",
+                        help="reuse workspace/profile.json when no file in workspace/data changed since it was written")
     args = parser.parse_args(argv)
     safe_stdout()
+
+    out = Path(args.workspace) / "profile.json"
+    if args.if_changed and out.exists():
+        existing = json.loads(out.read_text(encoding="utf-8"))
+        if existing.get("files") == _file_stamps(args.workspace) and existing.get("masked") == (not args.no_mask):
+            print(summarize(existing))
+            print(f"\nProfile is current ({out}); no file in data/ changed.")
+            return 0
 
     profile = build_profile(args.workspace, mask=not args.no_mask)
     if not profile["tables"]:
         print(f"No CSV or Excel files found in {Path(args.workspace) / 'data'}. Add exports there and re-run.")
         return 1
-    out = Path(args.workspace) / "profile.json"
     out.write_text(json.dumps(profile, indent=2, default=str), encoding="utf-8")
     print(summarize(profile))
     print(f"\nProfile saved to {out}")
